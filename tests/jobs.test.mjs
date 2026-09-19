@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { openJobs } from '../jobs.mjs';
+import { openJobs, determineTerminalState } from '../jobs.mjs';
 
 function deferred() {
   let resolve;
@@ -11,10 +11,10 @@ function deferred() {
   return { promise, resolve };
 }
 async function setup(t, options) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-dev-jobs-'));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'musu-jobs-'));
   t.after(async () => {
     assert.equal(path.dirname(directory), os.tmpdir());
-    assert.ok(path.basename(directory).startsWith('remote-dev-jobs-'));
+    assert.ok(path.basename(directory).startsWith('musu-jobs-'));
     await fs.rm(directory, { recursive: true, force: true });
   });
   return { directory, jobs: await openJobs(directory, options) };
@@ -176,3 +176,44 @@ test('invalid request keys and owner are rejected before operation admission', a
   }
   assert.deepEqual(await fs.readdir(directory), []);
 });
+
+test('determineTerminalState accurately classifies process and tool outcomes', () => {
+  assert.equal(determineTerminalState(null), 'succeeded');
+  assert.equal(determineTerminalState(undefined), 'succeeded');
+  assert.equal(determineTerminalState({ count: 10 }), 'succeeded');
+  assert.equal(determineTerminalState({ isError: true, error: 'fail' }), 'failed');
+  assert.equal(determineTerminalState({ error: 'fail' }), 'failed');
+
+  // Process results
+  assert.equal(determineTerminalState({ exitCode: 0, signal: null, timedOut: false }), 'succeeded');
+  assert.equal(determineTerminalState({ exitCode: 1, signal: null }), 'failed');
+  assert.equal(determineTerminalState({ exitCode: null, signal: 'SIGKILL' }), 'failed');
+  assert.equal(determineTerminalState({ exitCode: null, signal: null }), 'failed');
+  assert.equal(determineTerminalState({ exitCode: 0, timedOut: true }), 'failed');
+  assert.equal(determineTerminalState({ sessionId: 'abc', completed: false }), 'failed');
+  assert.equal(determineTerminalState({ sessionId: 'abc', exitCode: 0, completed: true }), 'succeeded');
+});
+
+test('jobs properly transition to failed when process is killed by signal or null exitCode', async t => {
+  const { jobs } = await setup(t);
+  const killed = await jobs.submit('alice', 'killed', { tool: 'exec' }, async () => ({
+    sessionId: 'session-1',
+    exitCode: null,
+    signal: 'SIGKILL',
+    error: 'Process killed by SIGKILL'
+  }));
+  await jobs.idle();
+  const res = jobs.get(killed.id, 'alice');
+  assert.equal(res.state, 'failed');
+  assert.equal(res.error, 'Process killed by SIGKILL');
+  assert.equal(res.result.signal, 'SIGKILL');
+
+  const zero = await jobs.submit('alice', 'zero', { tool: 'exec' }, async () => ({
+    sessionId: 'session-2',
+    exitCode: 0,
+    signal: null
+  }));
+  await jobs.idle();
+  assert.equal(jobs.get(zero.id, 'alice').state, 'succeeded');
+});
+

@@ -8,6 +8,29 @@ function canonical(value) {
   return value;
 }
 const digest=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+export function determineTerminalState(result) {
+  if (!result) return 'succeeded';
+  if (result.isError || result.error) return 'failed';
+
+  const isProcess = (
+    result.sessionId !== undefined ||
+    result.exitCode !== undefined ||
+    result.signal !== undefined ||
+    result.timedOut !== undefined ||
+    result.completed !== undefined
+  );
+
+  if (isProcess) {
+    if (result.timedOut === true) return 'failed';
+    if (result.signal != null) return 'failed';
+    if (result.completed === false) return 'failed';
+    if (result.exitCode !== 0) return 'failed';
+    return 'succeeded';
+  }
+
+  return 'succeeded';
+}
+
 export async function openJobs(directory,{maxPending=4,maxRecords=2000}={}) {
   await fs.mkdir(directory,{recursive:true});
   const jobs=new Map(),controllers=new Map();let queue=Promise.resolve(),admission=Promise.resolve();
@@ -55,7 +78,12 @@ export async function openJobs(directory,{maxPending=4,maxRecords=2000}={}) {
           await update({state:'backing_up'});
           const result=await operation({signal:controller.signal,update});
           controller.signal.throwIfAborted();
-          await update({state:result?.exitCode!=null&&result.exitCode!==0?'failed':'succeeded',result});
+          const state = determineTerminalState(result);
+          await update({
+            state,
+            result,
+            ...(state === 'failed' && result?.error ? { error: String(result.error).slice(0, 2000) } : {})
+          });
         }catch(e){job.state=controller.signal.aborted?'cancelled':'failed';job.error=String(e.message).slice(0,2000);try{await save(job);}catch(err){console.error('Job terminal state write failed:',err.message);}}
         finally{controllers.delete(job.id);}
       }).catch(e=>console.error('Job queue failed:',e.message));
