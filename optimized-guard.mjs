@@ -65,7 +65,7 @@ function isSingleCommandReadOnly(cmd) {
   if (tokens.length === 0) return false;
   const bin = tokens[0];
 
-  if (['pwd', 'which', 'where', 'echo', 'cat', 'head', 'tail', 'ls', 'dir', 'wc', 'grep', 'sort', 'uniq', 'jq'].includes(bin)) {
+  if (['pwd', 'which', 'where', 'echo', 'cat', 'head', 'tail', 'ls', 'dir', 'wc', 'grep', 'sort', 'uniq', 'jq', 'date', 'printf', 'true', 'false', 'uname', 'whoami'].includes(bin)) {
     return true;
   }
 
