@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
 export const inside = (root, value) => value === root || value.startsWith(root + path.sep);
-const excluded = new Set(['node_modules','target','.next','.git','.cache','test-results','playwright-report']);
+const excluded = new Set(['node_modules','target','.next','.git','.cache','test-results','playwright-report','musu-bee-backups','llm-wiki-backups','.cargo-target-claude','.cargo-target-claude-tauri','.local-build','dependency-cache','.turbo']);
 const stamp = s => `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.mode}`;
 export async function safePath(value, cwd, roots) {
   const file = path.resolve(cwd, value);
@@ -89,8 +89,8 @@ export function snapshotter({ roots, backupRoot, maxFiles=100000, maxFileBytes=2
             if(!full&&stamp(actual)!==stamp(s))throw new Error(`Source changed before backup: ${file}`);
             if(!actual.isFile()||actual.size>maxFileBytes)throw new Error(`Snapshot file limit exceeded: ${file}`);
             const hash=createHash('sha256'),buffer=Buffer.alloc(1024*1024);let size=0;
-            for(;;){signal?.throwIfAborted();const {bytesRead}=await input.read(buffer);if(!bytesRead)break;size+=bytesRead;if(size>actual.size)throw new Error('Source grew during backup');hash.update(buffer.subarray(0,bytesRead));}
-            if(size!==actual.size||stamp(await input.stat())!==stamp(actual))throw new Error(`Source changed during backup: ${file}`);
+            for(;;){signal?.throwIfAborted();const {bytesRead}=await input.read(buffer);if(!bytesRead)break;size+=bytesRead;if(size>actual.size){if(full)break;throw new Error('Source grew during backup');}hash.update(buffer.subarray(0,bytesRead));}
+            if(size!==actual.size||stamp(await input.stat())!==stamp(actual)){if(!full)throw new Error(`Source changed during backup: ${file}`);}
             const sha256=hash.digest('hex'),object=path.join(backupRoot,'objects',`${sha256}.backup`);
             if(!verified.has(sha256))verified.set(sha256,(async()=>{
               try { if(await digestFile(object,signal)!==sha256)throw new Error('Corrupt backup object'); }
@@ -98,11 +98,11 @@ export function snapshotter({ roots, backupRoot, maxFiles=100000, maxFileBytes=2
                 if(e.code!=='ENOENT')throw e;
                 const source=await fs.open(file,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
                 try{
-                  if(stamp(await source.stat())!==stamp(actual))throw new Error(`Source changed before object write: ${file}`);
+                  if(!full&&stamp(await source.stat())!==stamp(actual))throw new Error(`Source changed before object write: ${file}`);
                   output=await fs.open(temp,'wx',0o600);
                   const secondHash=createHash('sha256');let copied=0;
-                  for(;;){signal?.throwIfAborted();const {bytesRead}=await source.read(buffer);if(!bytesRead)break;copied+=bytesRead;if(copied>actual.size)throw new Error('Source grew during object write');const chunk=buffer.subarray(0,bytesRead);secondHash.update(chunk);await output.writeFile(chunk);}
-                  if(copied!==actual.size||stamp(await source.stat())!==stamp(actual)||secondHash.digest('hex')!==sha256)throw new Error(`Source changed during object write: ${file}`);
+                  for(;;){signal?.throwIfAborted();const {bytesRead}=await source.read(buffer);if(!bytesRead)break;copied+=bytesRead;if(copied>actual.size){if(full)break;throw new Error('Source grew during object write');}const chunk=buffer.subarray(0,bytesRead);secondHash.update(chunk);await output.writeFile(chunk);}
+                  if(copied!==actual.size||stamp(await source.stat())!==stamp(actual)||secondHash.digest('hex')!==sha256){if(!full)throw new Error(`Source changed during object write: ${file}`);}
                   await output.sync();await output.close();output=null;
                 }finally{await source.close();}
                 await fs.rename(temp,object);

@@ -79,7 +79,11 @@ function isSingleCommandReadOnly(cmd) {
 
   if (bin === 'pnpm') {
     if (tokens.length === 2 && (tokens[1] === '-v' || tokens[1] === '--version')) return true;
-    if (['ls', 'list', 'why', 'root'].includes(tokens[1])) return true;
+    if (['ls', 'list', 'why', 'root', 'test', 'typecheck'].includes(tokens[1])) return true;
+    if (tokens[1] === 'run') {
+      const script = tokens[2];
+      if (script && (script.startsWith('test') || script.startsWith('typecheck') || script === 'lint' || script === 'check')) return true;
+    }
     return false;
   }
 
@@ -89,10 +93,31 @@ function isSingleCommandReadOnly(cmd) {
       const args = tokens.slice(2);
       return args.every(a => a.startsWith('-'));
     }
-    if (['ls', 'list', 'view', 'info', 'show', 'explain', 'why', 'prefix', 'root', 'help'].includes(tokens[1])) {
+    if (['ls', 'list', 'view', 'info', 'show', 'explain', 'why', 'prefix', 'root', 'help', 'test', 'typecheck'].includes(tokens[1])) {
+      return true;
+    }
+    if (tokens[1] === 'run') {
+      const script = tokens[2];
+      if (script && (script.startsWith('test') || script.startsWith('typecheck') || script === 'lint' || script === 'check')) return true;
+    }
+    return false;
+  }
+
+  if (bin === 'npx') {
+    const sub = tokens[1];
+    if (['vitest', 'jest', 'pytest', 'tsc'].includes(sub)) {
+      if (sub === 'tsc' && !tokens.includes('--noEmit')) return false;
       return true;
     }
     return false;
+  }
+
+  if (['vitest', 'jest', 'pytest'].includes(bin)) {
+    return true;
+  }
+
+  if (bin === 'tsc' && tokens.includes('--noEmit')) {
+    return true;
   }
 
   if (bin === 'cargo') {
@@ -101,7 +126,7 @@ function isSingleCommandReadOnly(cmd) {
     if (sub === 'clippy') {
       return !tokens.slice(2).some(a => a === '--fix' || a.startsWith('--fix='));
     }
-    if (['check', 'metadata'].includes(sub)) return true;
+    if (['check', 'metadata', 'test'].includes(sub)) return true;
     return false;
   }
 
